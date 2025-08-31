@@ -238,11 +238,11 @@ export class SyncService {
 
 			log(`replaceGistWithMerge - Using gist ID: ${gistId}`);
 
-			vscode.window.showInformationMessage(`Replace Gist: Pulling, merging, and pushing... (${files.join(', ')})`);
+			vscode.window.showInformationMessage(`Update Gist: Merging and pushing to existing gist... (${files.join(', ')})`);
 			
 			await vscode.window.withProgress({
 				location: vscode.ProgressLocation.Notification,
-				title: "Replacing Gist with merge...",
+				title: "Updating Gist with merge...",
 				cancellable: false
 			}, async (progress) => {
 				progress.report({ increment: 10, message: "Pulling existing Gist..." });
@@ -280,16 +280,9 @@ export class SyncService {
 					throw new Error('Gist does not belong to this extension');
 				}
 				
-				progress.report({ increment: 20, message: "Deleting existing Gist..." });
-				
-				// Step 2: Delete the existing gist
-				log('replaceGistWithMerge - Step 2: Deleting existing gist');
-				await this.githubService.deleteGist(gistId);
-				log(`replaceGistWithMerge - Successfully deleted gist: ${gistId}`);
-				
 				progress.report({ increment: 20, message: "Merging files locally..." });
 				
-				// Step 3: Merge files locally in temp directory
+				// Step 2: Merge files locally in temp directory
 				const fs = require('fs');
 				const path = require('path');
 				const os = require('os');
@@ -345,17 +338,15 @@ export class SyncService {
 					
 					log(`replaceGistWithMerge - Merged ${Object.keys(mergedFiles).length} total files: ${Object.keys(mergedFiles).join(', ')}`);
 					
-					progress.report({ increment: 20, message: "Creating new Gist..." });
+					progress.report({ increment: 20, message: "Updating Gist..." });
 					
-					// Step 4: Create new gist with merged content
-					log('replaceGistWithMerge - Step 4: Creating new gist with merged content');
-					const result = await this.githubService.createGist(files, mergedFiles);
+					// Step 3: Update existing gist with merged content (creates revision)
+					log('replaceGistWithMerge - Step 3: Updating existing gist with merged content');
+					const result = await this.githubService.updateGist(gistId, files, mergedFiles);
 					
-					// Update config with new gist ID
-					this.config.github.gistId = result.id;
-					log(`replaceGistWithMerge - Successfully created new gist: ${result.id}`);
+					log(`replaceGistWithMerge - Successfully updated gist: ${gistId} (revision created)`);
 					
-					// Save updated config
+					// Save updated config (gist ID stays the same)
 					if (this.configManager) {
 						await this.configManager.saveConfig(this.config);
 					} else {
@@ -364,8 +355,8 @@ export class SyncService {
 					
 					progress.report({ increment: 10, message: "Cleanup..." });
 					
-					// Clean up any other old gists
-					await this.githubService.cleanupOldGists(result.id);
+					// Clean up any other old gists (but not this one)
+					await this.githubService.cleanupOldGists(gistId);
 					
 				} finally {
 					// Clean up temp directory
@@ -385,7 +376,7 @@ export class SyncService {
 				}
 			});
 			
-			vscode.window.showInformationMessage(`✅ Gist replaced successfully with merged content! New ID: ${this.config.github.gistId}`);
+			vscode.window.showInformationMessage(`✅ Gist updated successfully with merged content! Revision created for: ${this.config.github.gistId}`);
 		} catch (error) {
 			log(`replaceGistWithMerge - Error: ${error}`);
 			vscode.window.showErrorMessage(`❌ Failed to replace Gist: ${error}`);
