@@ -139,6 +139,8 @@ export class SyncService {
 				// Clean up any old Gists after creating new one
 				await this.githubService.cleanupOldGists(result.id);
 			}
+			
+			// Save config and show success message
 			if (this.configManager) {
 				await this.configManager.saveConfig(this.config);
 			} else {
@@ -379,6 +381,13 @@ export class SyncService {
 			vscode.window.showInformationMessage(`✅ Gist updated successfully with merged content! Revision created for: ${this.config.github.gistId}`);
 		} catch (error) {
 			log(`replaceGistWithMerge - Error: ${error}`);
+			
+			// Re-throw specific errors that should be handled by the caller
+			if (error instanceof Error && error.message.includes('no longer exists')) {
+				log(`replaceGistWithMerge - Re-throwing "no longer exists" error to caller`);
+				throw error; // Re-throw so pushConfiguration can handle it
+			}
+			
 			vscode.window.showErrorMessage(`❌ Failed to replace Gist: ${error}`);
 		}
 	}
