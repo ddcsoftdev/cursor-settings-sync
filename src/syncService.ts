@@ -4,6 +4,7 @@ import { GitHubService } from './github';
 import { FileManager } from './fileManager';
 import { ConfigManager } from './configManager';
 import { FileProcessor } from './fileProcessor';
+import { PullManager } from './pullManager';
 
 // Get the output channel from the extension
 let outputChannel: vscode.OutputChannel | undefined;
@@ -24,6 +25,7 @@ export class SyncService {
 	private githubService: GitHubService;
 	private fileManager: FileManager;
 	private fileProcessor: FileProcessor;
+	private pullManager: PullManager;
 	private configManager?: ConfigManager;
 
 	constructor(config: ExtensionConfig, configManager?: ConfigManager) {
@@ -34,6 +36,7 @@ export class SyncService {
 		this.githubService = new GitHubService(config);
 		this.fileManager = new FileManager(config);
 		this.fileProcessor = new FileProcessor(config);
+		this.pullManager = new PullManager(config);
 		this.configManager = configManager;
 	}
 
@@ -155,67 +158,8 @@ export class SyncService {
 	}
 
 	async pullConfiguration(files: string[], path: string, context: vscode.ExtensionContext): Promise<void> {
-		try {
-			if (!path) {
-				vscode.window.showErrorMessage('Please enter a settings path first');
-				return;
-			}
-
-			const gistId = this.config.github.gistId;
-			
-			if (!gistId) {
-				vscode.window.showErrorMessage('No Gist ID found. Please push your configuration first.');
-				return;
-			}
-			
-			vscode.window.showInformationMessage(`Pull Config: Fetching from GitHub Gist... (${files.join(', ')})`);
-			
-			await vscode.window.withProgress({
-				location: vscode.ProgressLocation.Notification,
-				title: "Pulling configuration from GitHub Gist...",
-				cancellable: false
-			}, async (progress) => {
-				progress.report({ increment: 10 });
-				
-				// Fetch gist
-				const result = await this.githubService.getGist(gistId);
-				
-				progress.report({ increment: 30 });
-				
-				// Verify this is the right gist by checking extension name
-				const timestampFile = result.files['timestamp.json'];
-				if (!timestampFile) {
-					throw new Error('No timestamp.json found in Gist');
-				}
-				
-				const timestampData: TimestampData = JSON.parse(timestampFile.content);
-				if (timestampData.extensionName !== this.config.extensionName) {
-					throw new Error('Gist does not belong to this extension');
-				}
-				
-				progress.report({ increment: 20 });
-				
-				// Extract file contents from gist
-				const fileContents: { [key: string]: string } = {};
-				for (const file of files) {
-					const gistFile = result.files[file];
-					if (gistFile) {
-						fileContents[file] = gistFile.content;
-					}
-				}
-				
-				progress.report({ increment: 20 });
-				
-				// Write files to local system
-				await this.fileManager.writeFiles(files, path, fileContents);
-				
-				progress.report({ increment: 20 });
-			});
-			
-			vscode.window.showInformationMessage(`✅ Configuration pulled successfully from GitHub Gist!`);
-		} catch (error) {
-			vscode.window.showErrorMessage(`❌ Failed to pull configuration: ${error}`);
-		}
+		// Delegate to the new PullManager for enhanced pull functionality
+		await this.pullManager.pullConfiguration(files, path, context);
 	}
 
 	async replaceGistWithMerge(files: string[], path: string, context: vscode.ExtensionContext): Promise<void> {

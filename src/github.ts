@@ -52,9 +52,12 @@ export class GitHubService {
 	private async makeGitHubRequest(path: string, method: string = 'GET', data?: any): Promise<any> {
 		const https = require('https');
 		
+		// Parse the API base URL to get hostname and port
+		const apiUrl = new URL(this.config.github.apiBaseUrl);
+		
 		const options: any = {
-			hostname: 'api.github.com',
-			port: 443,
+			hostname: apiUrl.hostname,
+			port: apiUrl.port || (apiUrl.protocol === 'https:' ? 443 : 80),
 			path: path,
 			method: method,
 			headers: {
@@ -74,7 +77,15 @@ export class GitHubService {
 				res.on('end', () => {
 					if (res.statusCode >= 200 && res.statusCode < 300) {
 						try {
-							resolve(JSON.parse(responseData));
+							const parsed = JSON.parse(responseData);
+							if (parsed.files) {
+								log(`makeGitHubRequest - Response contains ${Object.keys(parsed.files).length} files`);
+								for (const [fileName, fileData] of Object.entries(parsed.files)) {
+									const content = (fileData as any).content;
+									log(`makeGitHubRequest - Response file ${fileName}: ${content ? content.length : 0} characters`);
+								}
+							}
+							resolve(parsed);
 						} catch (e) {
 							resolve(responseData);
 						}
@@ -86,7 +97,9 @@ export class GitHubService {
 			
 			req.on('error', reject);
 			if (data) {
-				req.write(JSON.stringify(data));
+				const jsonData = JSON.stringify(data);
+				log(`makeGitHubRequest - Request body size: ${jsonData.length} characters`);
+				req.write(jsonData);
 			}
 			req.end();
 		});
@@ -101,13 +114,16 @@ export class GitHubService {
 		try {
 			const https = require('https');
 			
+			// Parse the API base URL to get hostname and port
+			const apiUrl = new URL(this.config.github.apiBaseUrl);
+			
 			const options = {
-				hostname: 'api.github.com',
-				port: 443,
+				hostname: apiUrl.hostname,
+				port: apiUrl.port || (apiUrl.protocol === 'https:' ? 443 : 80),
 				path: '/user',
 				method: 'GET',
 				headers: {
-					'User-Agent': 'Cursor-Settings-Sync-Extension',
+					'User-Agent': this.config.github.userAgent,
 					'Authorization': `token ${token}`
 				}
 			};
@@ -151,6 +167,7 @@ export class GitHubService {
 		// Remove includedDirectories to keep it local only
 		delete gistConfig.includedDirectories;
 		
+		// Create single gist
 		const gistData: GistData = {
 			description: `Cursor Settings Sync - ${new Date().toISOString()}`,
 			public: this.config.github.gistPublic,
@@ -168,7 +185,7 @@ export class GitHubService {
 				...fileContents
 			}
 		};
-
+		
 		return this.makeGitHubRequest('/gists', 'POST', gistData);
 	}
 
@@ -249,7 +266,7 @@ export class GitHubService {
 		log('updateGist - Token starts with: ' + this.config.github.personalAccessToken.substring(0, 4));
 		log('updateGist - Token ends with: ' + this.config.github.personalAccessToken.substring(this.config.github.personalAccessToken.length - 4));
 
-		// First, get the existing Gist to merge with
+		// Get the existing Gist
 		log('updateGist - Fetching existing Gist for merge');
 		const existingGist = await this.getGist(gistId);
 		
@@ -266,8 +283,9 @@ export class GitHubService {
 		for (const [fileName, fileData] of Object.entries(existingGist.files)) {
 			if (fileName !== 'cursor-git-sync-storage.json' && fileName !== 'timestamp.json') {
 				// Ensure correct structure: { content: string }
+				const content = (fileData as any).content;
 				mergedFiles[fileName] = {
-					content: fileData.content
+					content: content
 				};
 			}
 		}
@@ -275,8 +293,16 @@ export class GitHubService {
 		// Add/update new files
 		for (const [fileName, fileData] of Object.entries(fileContents)) {
 			// Ensure correct structure: { content: string }
+			const content = fileData.content;
+			log(`updateGist - Adding new file ${fileName}: ${content.length} characters`);
+			
+			if (!content || content.length === 0) {
+				log(`Warning: New file ${fileName} has empty content, skipping`);
+				continue;
+			}
+			
 			mergedFiles[fileName] = {
-				content: fileData.content
+				content: content
 			};
 		}
 		
@@ -285,19 +311,25 @@ export class GitHubService {
 			file => file !== 'cursor-git-sync-storage.json' && file !== 'timestamp.json'
 		);
 		
+		// Validate and clean files
+		this.validateAndCleanFiles(mergedFiles);
+		
+		const gistConfigContent = JSON.stringify(gistConfig, null, 2);
+		const timestampContent = JSON.stringify({
+			timestamp: new Date().toISOString(),
+			extensionName: this.config.extensionName,
+			files: allFiles
+		} as TimestampData, null, 2);
+		
 		const gistData: GistData = {
 			description: `Cursor Settings Sync - ${new Date().toISOString()}`,
 			public: this.config.github.gistPublic,
 			files: {
 				'cursor-git-sync-storage.json': {
-					content: JSON.stringify(gistConfig, null, 2)
+					content: gistConfigContent
 				},
 				'timestamp.json': {
-					content: JSON.stringify({
-						timestamp: new Date().toISOString(),
-						extensionName: this.config.extensionName,
-						files: allFiles
-					} as TimestampData, null, 2)
+					content: timestampContent
 				},
 				...mergedFiles
 			}
@@ -305,12 +337,76 @@ export class GitHubService {
 
 		log('updateGist - Merged files: ' + Object.keys(mergedFiles).join(', '));
 		
-		// Debug: Log the structure being sent
-		for (const [fileName, fileData] of Object.entries(mergedFiles)) {
-			log(`updateGist - File ${fileName} structure: ${typeof fileData.content} - ${fileData.content.substring(0, 50)}...`);
+		// Debug: Log the complete gist data structure
+		log(`updateGist - Gist data structure: ${Object.keys(gistData.files).length} files`);
+		log(`updateGist - Gist files: ${Object.keys(gistData.files).join(', ')}`);
+		
+		// Validate that all files have the correct structure and content
+		for (const [fileName, fileData] of Object.entries(gistData.files)) {
+			if (!fileData.content || typeof fileData.content !== 'string') {
+				throw new Error(`Invalid file structure for ${fileName}: content must be a string`);
+			}
+			if (fileData.content.length === 0) {
+				log(`Warning: File ${fileName} has empty content before sending to GitHub`);
+			}
+			log(`updateGist - Final validation ${fileName}: ${fileData.content.length} characters`);
 		}
 		
-		return this.makeGitHubRequest(`/gists/${gistId}`, 'PATCH', gistData);
+		// Log the actual data being sent to GitHub
+		log(`updateGist - Sending gist data to GitHub API...`);
+		const response = await this.makeGitHubRequest(`/gists/${gistId}`, 'PATCH', gistData);
+		
+		// Verify the response
+		log(`updateGist - GitHub API response received`);
+		if (response && response.files) {
+			for (const [fileName, fileData] of Object.entries(response.files)) {
+				const content = (fileData as any).content;
+				log(`updateGist - Response file ${fileName}: ${content ? content.length : 0} characters`);
+			}
+		}
+		
+		return response;
+	}
+
+	private validateAndCleanFiles(files: { [key: string]: { content: string } }): void {
+		const maxFileSize = 10 * 1024 * 1024; // 10MB per file
+		const filesToRemove: string[] = [];
+		
+		for (const [fileName, fileData] of Object.entries(files)) {
+			// Validate file name (GitHub has restrictions on file names)
+			if (fileName.includes('..') || fileName.includes('\\') || fileName.includes('/') && fileName !== 'images.json') {
+				log(`Warning: Potentially problematic file name: ${fileName}`);
+			}
+			
+			// Ensure content is properly encoded as UTF-8 string
+			let content = fileData.content;
+			if (typeof content !== 'string') {
+				log(`Warning: Converting non-string content for ${fileName} to string`);
+				content = String(content);
+			}
+			
+			// Validate that content is not empty
+			if (!content || content.length === 0) {
+				log(`Warning: Empty content detected for ${fileName}, removing from gist`);
+				filesToRemove.push(fileName);
+				continue;
+			}
+			
+			const fileSize = Buffer.byteLength(content, 'utf8');
+			
+			if (fileSize > maxFileSize) {
+				throw new Error(`File ${fileName} is too large (${(fileSize / 1024 / 1024).toFixed(2)}MB). Maximum allowed is ${(maxFileSize / 1024 / 1024).toFixed(2)}MB.`);
+			}
+			
+			// Update the content to ensure it's properly formatted
+			files[fileName] = { content };
+		}
+		
+		// Remove empty files
+		for (const fileName of filesToRemove) {
+			delete files[fileName];
+			log(`Removed empty file: ${fileName}`);
+		}
 	}
 
 	async deleteGist(gistId: string): Promise<void> {

@@ -45,23 +45,208 @@ export class FileManager {
 	async writeFiles(files: string[], settingsPath: string, fileContents: { [key: string]: string }): Promise<void> {
 		const fs = require('fs');
 		
-		// Write JSON files to local system
+		// Write files to local system
 		for (const file of files) {
-			// Skip images directory for now
-			if (file === 'images') {
-				console.log('Skipping images directory - JSON files only');
-				continue;
-			}
-			
 			const content = fileContents[file];
 			if (content) {
 				const filePath = `${settingsPath}/${file}`;
 				try {
+					console.log(`Processing file: ${file} (content length: ${content.length})`);
+					
+					// Regular text/JSON file
+					console.log(`Treating as regular file: ${file}`);
 					fs.writeFileSync(filePath, content, 'utf8');
 				} catch (error) {
 					console.log(`Failed to write file: ${filePath}`, error);
 				}
 			}
+		}
+	}
+
+	private isImageFile(fileName: string, content: string): boolean {
+		// Check if the content is raw Base64 data (version 3.0)
+		try {
+			// First check if content is empty or whitespace
+			if (!content || !content.trim()) {
+				console.log(`isImageFile: ${fileName} - empty content`);
+				return false;
+			}
+			
+			// Check if filename suggests it's an image file
+			const imageExtensions = ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.webp', '.svg', '.ico'];
+			const hasImageExtension = imageExtensions.some(ext => fileName.toLowerCase().includes(ext));
+			
+			// Check if it's raw Base64 content
+			const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+			const isValidBase64 = base64Regex.test(content.trim());
+			
+			const isImage = isValidBase64 && hasImageExtension;
+			console.log(`isImageFile: ${fileName} - result: ${isImage}`);
+			
+			return isImage;
+		} catch (error) {
+			// Log the error for debugging but don't throw
+			console.log(`isImageFile: ${fileName} - error: ${error}`);
+			return false;
+		}
+	}
+
+	private async restoreImageFile(fileName: string, content: string, targetPath: string): Promise<void> {
+		try {
+			// Validate content before processing
+			if (!content || !content.trim()) {
+				throw new Error('Empty or invalid content');
+			}
+			
+			// Validate that content is valid Base64
+			const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+			if (!base64Regex.test(content.trim())) {
+				throw new Error('Invalid Base64 content');
+			}
+			
+			// Convert Base64 back to binary
+			const buffer = Buffer.from(content, 'base64');
+			
+			// Ensure the target directory exists
+			const path = require('path');
+			const dir = path.dirname(targetPath);
+			const fs = require('fs');
+			if (!fs.existsSync(dir)) {
+				fs.mkdirSync(dir, { recursive: true });
+			}
+			
+			// Write the binary data
+			fs.writeFileSync(targetPath, buffer);
+			
+			console.log(`Restored image: ${fileName} (${buffer.length} bytes)`);
+		} catch (error) {
+			console.log(`Failed to restore image ${fileName}: ${error}`);
+			throw error;
+		}
+	}
+
+	private async restoreImagesDirectory(fileName: string, content: string, targetPath: string): Promise<void> {
+		try {
+			// Validate content before parsing
+			if (!content || !content.trim()) {
+				throw new Error('Empty or invalid content');
+			}
+			
+			const directoryData = JSON.parse(content);
+			
+			// Check if this is a new version manifest (v3.0) or old version
+			if (directoryData.version === '3.0') {
+				// New version: images are stored as separate files with raw Base64 content
+				await this.restoreImagesDirectoryV3(fileName, content, targetPath);
+			} else {
+				// Old version: images are embedded in the manifest
+				await this.restoreImagesDirectoryV1(fileName, content, targetPath);
+			}
+		} catch (error) {
+			console.log(`Failed to restore images directory ${fileName}: ${error}`);
+			throw error;
+		}
+	}
+
+	private async restoreImagesDirectoryV1(fileName: string, content: string, targetPath: string): Promise<void> {
+		try {
+			const directoryData = JSON.parse(content);
+			
+			// Validate the directory data structure
+			if (!directoryData.directoryName || !directoryData.images) {
+				throw new Error('Invalid images directory data structure');
+			}
+			
+			// Create the images directory
+			const fs = require('fs');
+			const path = require('path');
+			if (!fs.existsSync(targetPath)) {
+				fs.mkdirSync(targetPath, { recursive: true });
+			}
+			
+			// Restore each image in the directory
+			for (const [imageFileName, imageData] of Object.entries(directoryData.images)) {
+				const imagePath = path.join(targetPath, imageFileName);
+				
+				// Convert Base64 back to binary
+				const buffer = Buffer.from((imageData as any).data, 'base64');
+				
+				// Write the binary data
+				fs.writeFileSync(imagePath, buffer);
+				
+				console.log(`Restored image in directory: ${imageFileName} (${(imageData as any).mimeType}, ${buffer.length} bytes)`);
+			}
+			
+			console.log(`Restored images directory (v1): ${fileName} (${Object.keys(directoryData.images).length} images)`);
+		} catch (error) {
+			console.log(`Failed to restore images directory v1 ${fileName}: ${error}`);
+			throw error;
+		}
+	}
+
+	private async restoreImagesDirectoryV2(fileName: string, content: string, targetPath: string): Promise<void> {
+		try {
+			const directoryData = JSON.parse(content);
+			
+			// Validate the directory data structure
+			if (!directoryData.directoryName || !directoryData.images) {
+				throw new Error('Invalid images directory data structure');
+			}
+			
+			// Create the images directory
+			const fs = require('fs');
+			const path = require('path');
+			if (!fs.existsSync(targetPath)) {
+				fs.mkdirSync(targetPath, { recursive: true });
+			}
+			
+			// For v2.0, the images are stored as separate files in the gist
+			// The manifest just contains metadata about the images
+			// The actual image files should be processed separately by the pull manager
+			console.log(`Images directory manifest (v2.0) found: ${fileName} (${Object.keys(directoryData.images).length} images)`);
+			console.log(`Individual image files will be restored separately`);
+		} catch (error) {
+			console.log(`Failed to restore images directory v2 ${fileName}: ${error}`);
+			throw error;
+		}
+	}
+
+	private async restoreImagesDirectoryV3(fileName: string, content: string, targetPath: string): Promise<void> {
+		try {
+			const directoryData = JSON.parse(content);
+			
+			// Validate the directory data structure
+			if (!directoryData.directoryName || !directoryData.images) {
+				throw new Error('Invalid images directory data structure');
+			}
+			
+			// Create the images directory
+			const fs = require('fs');
+			const path = require('path');
+			if (!fs.existsSync(targetPath)) {
+				fs.mkdirSync(targetPath, { recursive: true });
+			}
+			
+			// For v3.0, the images are stored as separate files with raw Base64 content
+			// The manifest just contains metadata about the images
+			// The actual image files should be processed separately by the pull manager
+			console.log(`Images directory manifest (v3.0) found: ${fileName} (${Object.keys(directoryData.images).length} images)`);
+			console.log(`Individual image files will be restored separately`);
+		} catch (error) {
+			console.log(`Failed to restore images directory v3 ${fileName}: ${error}`);
+			throw error;
+		}
+	}
+
+	private getCursorUserDirectory(homeDir: string): string {
+		const platform = process.platform;
+		
+		if (platform === 'win32') {
+			return `${homeDir}\\AppData\\Roaming\\Cursor\\User`;
+		} else if (platform === 'darwin') {
+			return `${homeDir}/Library/Application Support/Cursor/User`;
+		} else {
+			return `${homeDir}/.config/Cursor/User`;
 		}
 	}
 
@@ -79,14 +264,19 @@ export class FileManager {
 				filePath = pathParts.join('/');
 			} else {
 				const homeDir = process.env.HOME || process.env.USERPROFILE;
+				if (!homeDir) {
+					throw new Error('Could not determine home directory');
+				}
+				const cursorUserDir = this.getCursorUserDirectory(homeDir);
+				
 				switch (fileType) {
-					case 'settings.json': filePath = `${homeDir}/.config/Cursor/User/settings.json`; break;
-					case 'keybindings.json': filePath = `${homeDir}/.config/Cursor/User/keybindings.json`; break;
-					case 'extensions.json': filePath = `${homeDir}/.config/Cursor/User/extensions.json`; break;
-					case 'launch.json': filePath = `${homeDir}/.config/Cursor/User/launch.json`; break;
-					case 'tasks.json': filePath = `${homeDir}/.config/Cursor/User/tasks.json`; break;
-					case 'snippets': filePath = `${homeDir}/.config/Cursor/User/snippets`; break;
-					default: filePath = `${homeDir}/.config/Cursor/User/${fileType}`;
+					case 'settings.json': filePath = `${cursorUserDir}/settings.json`; break;
+					case 'keybindings.json': filePath = `${cursorUserDir}/keybindings.json`; break;
+					case 'snippets': filePath = `${cursorUserDir}/snippets`; break;
+					case 'extensions.json': filePath = `${cursorUserDir}/extensions.json`; break;
+					case 'profiles': filePath = `${cursorUserDir}/profiles`; break;
+					case 'sync': filePath = `${cursorUserDir}/sync`; break;
+					default: filePath = `${cursorUserDir}/${fileType}`;
 				}
 			}
 			
@@ -104,7 +294,11 @@ export class FileManager {
 	async openCursorSettings(): Promise<void> {
 		try {
 			const homeDir = process.env.HOME || process.env.USERPROFILE;
-			const settingsPath = `${homeDir}/.config/Cursor/User/settings.json`;
+			if (!homeDir) {
+				throw new Error('Could not determine home directory');
+			}
+			const cursorUserDir = this.getCursorUserDirectory(homeDir);
+			const settingsPath = `${cursorUserDir}/settings.json`;
 			const fs = require('fs');
 			
 			if (fs.existsSync(settingsPath)) {
@@ -113,11 +307,8 @@ export class FileManager {
 				vscode.window.showInformationMessage('Opened Cursor settings file');
 			} else {
 				const defaultSettings = `{
-    "window.commandCenter": true,
-    "window.zoomLevel": 1.2,
-    "editor.fontSize": 12.5,
-    "editor.cursorBlinking": "phase",
-    "editor.cursorSmoothCaretAnimation": "on",
+    "editor.fontSize": 14,
+    "editor.tabSize": 2,
     "files.autoSave": "afterDelay"
 }`;
 				const path = require('path');

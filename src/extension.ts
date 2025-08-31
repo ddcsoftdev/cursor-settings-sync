@@ -8,6 +8,21 @@ import { ConfigManager, setOutputChannel } from './configManager';
 import { setGitHubOutputChannel } from './github';
 import { setSyncOutputChannel } from './syncService';
 import { setFileProcessorOutputChannel } from './fileProcessor';
+import { setPullOutputChannel } from './pullManager';
+
+function getDefaultSettingsPath(): string {
+	const homeDir = require('os').homedir();
+	const platform = require('os').platform();
+	const path = require('path');
+	
+	if (platform === 'win32') {
+		return path.join(homeDir, 'AppData', 'Roaming', 'Cursor', 'User');
+	} else if (platform === 'darwin') {
+		return path.join(homeDir, 'Library', 'Application Support', 'Cursor', 'User');
+	} else {
+		return path.join(homeDir, '.config', 'Cursor', 'User');
+	}
+}
 
 // Create a dedicated output channel for logging
 const outputChannel = vscode.window.createOutputChannel('Cursor Git Settings Sync');
@@ -18,6 +33,7 @@ export function activate(context: vscode.ExtensionContext) {
 	setGitHubOutputChannel(outputChannel);
 	setSyncOutputChannel(outputChannel);
 	setFileProcessorOutputChannel(outputChannel);
+	setPullOutputChannel(outputChannel);
 	outputChannel.appendLine('Congratulations, your extension "cursor-git-settings-sync" is now active!');
 
 	// Register the dashboard command
@@ -59,7 +75,7 @@ async function showSettingsSyncDashboard(context: vscode.ExtensionContext) {
 	
 	// Get saved configuration
 	const savedConfig = await configManager.loadConfig();
-	const savedPath = savedConfig.settings?.path || '~/.config/Cursor/User';
+			const savedPath = savedConfig.settings?.path || getDefaultSettingsPath();
 	const savedFiles = savedConfig.includedDirectories || [];
 
 	panel.webview.html = getDashboardHTML(savedPath, savedFiles, savedConfig, configManager.getConfigPath());

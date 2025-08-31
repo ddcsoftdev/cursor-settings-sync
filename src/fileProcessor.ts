@@ -22,6 +22,12 @@ export interface ProcessedFile {
 	content: string;
 	type: 'text' | 'json' | 'binary' | 'directory';
 	valid: boolean;
+	metadata?: {
+		originalPath?: string;
+		fileSize?: number;
+		mimeType?: string;
+		encoding?: string;
+	};
 }
 
 export class FileProcessor {
@@ -88,45 +94,25 @@ export class FileProcessor {
 		}
 	}
 
-	private cleanupTempDir(): void {
-		if (this.tempDir && fs.existsSync(this.tempDir)) {
-			try {
-				// Remove all files in temp directory
-				const files = fs.readdirSync(this.tempDir);
-				for (const file of files) {
-					const filePath = path.join(this.tempDir, file);
-					fs.unlinkSync(filePath);
-				}
-				// Remove temp directory
-				fs.rmdirSync(this.tempDir);
-				log(`Cleaned up temporary directory: ${this.tempDir}`);
-			} catch (error) {
-				log(`Error cleaning up temp directory: ${error}`);
-			}
-			this.tempDir = null;
-		}
-	}
-
 	private async processSingleFile(fileName: string, filePath: string): Promise<ProcessedFile> {
-		// Determine file type based on extension
-		const fileType = this.getFileType(fileName);
-		
 		try {
-			if (fileType === 'json') {
-				return this.processJsonFile(filePath);
-			} else if (fileType === 'text') {
-				return this.processTextFile(filePath);
-			} else {
-				log(`Unsupported file type for ${fileName}, skipping`);
-				return { content: '', type: 'binary', valid: false };
+			const fileType = this.getFileType(fileName);
+			
+			switch (fileType) {
+				case 'json':
+					return this.processJsonFile(filePath);
+				case 'text':
+					return this.processTextFile(filePath);
+				default:
+					return this.processTextFile(filePath);
 			}
 		} catch (error) {
-			log(`Error processing ${fileName}: ${error}`);
-			return { content: '', type: 'binary', valid: false };
+			log(`Error processing single file ${filePath}: ${error}`);
+			return { content: '', type: 'text', valid: false };
 		}
 	}
 
-	private getFileType(fileName: string): 'json' | 'text' | 'binary' {
+	private getFileType(fileName: string): 'text' | 'json' | 'binary' | 'directory' {
 		const extension = fileName.split('.').pop()?.toLowerCase();
 		
 		switch (extension) {
@@ -135,128 +121,52 @@ export class FileProcessor {
 			case 'txt':
 			case 'md':
 			case 'log':
-			case 'conf':
-			case 'config':
+			case 'yml':
+			case 'yaml':
+			case 'xml':
+			case 'html':
+			case 'css':
+			case 'js':
+			case 'ts':
+			case 'py':
+			case 'sh':
+			case 'bat':
+			case 'ps1':
 				return 'text';
 			default:
-				return 'binary';
+				return 'text'; // Default to text for unknown extensions
 		}
 	}
 
-	private async processJsonFile(filePath: string): Promise<ProcessedFile> {
-		const content = fs.readFileSync(filePath, 'utf8');
-		
-		if (!content || !content.trim()) {
+	private processJsonFile(filePath: string): ProcessedFile {
+		try {
+			const content = fs.readFileSync(filePath, 'utf8');
+			
+			if (!content || !content.trim()) {
+				return { content: '', type: 'json', valid: false };
+			}
+			
+			// Try to parse as JSON to validate
+			const parsed = JSON.parse(content);
+			const formatted = JSON.stringify(parsed, null, 2);
+			
+			return {
+				content: formatted,
+				type: 'json',
+				valid: true,
+				metadata: {
+					fileSize: formatted.length,
+					mimeType: 'application/json',
+					encoding: 'utf8'
+				}
+			};
+		} catch (error) {
+			log(`Error processing JSON file ${filePath}: ${error}`);
 			return { content: '', type: 'json', valid: false };
 		}
-		
-		log(`Processing JSON file: ${filePath}`);
-		log(`Content length: ${content.length}`);
-		
-		// Just return the content as-is, no JSON fixing
-		let finalContent = content;
-		if (!finalContent.endsWith('\n')) {
-			finalContent += '\n';
-		}
-		
-		return {
-			content: finalContent,
-			type: 'json',
-			valid: true
-		};
 	}
 
-	private showJsonErrorContext(content: string, error: any): void {
-		// Removed - no longer needed
-	}
-
-	private cleanJsonContent(content: string): string {
-		return content
-			.replace(/\r\n/g, '\n')  // Normalize line endings
-			.replace(/\r/g, '\n')   // Convert CR to LF
-			.trim();                 // Remove leading/trailing whitespace
-	}
-
-	private fixJsonContent(content: string): string {
-		log(`Original content length: ${content.length}`);
-		log(`Original content preview: ${content.substring(0, 200)}...`);
-		
-		// Step 1: Remove comments (be more careful)
-		content = content.replace(/\/\/.*$/gm, '');  // Single line comments
-		content = content.replace(/\/\*[\s\S]*?\*\//g, '');  // Multi-line comments
-		
-		// Step 2: Remove trailing commas more carefully
-		// Only remove trailing commas that are followed by closing brackets/braces
-		content = content.replace(/,(\s*[}\]])/g, '$1');
-		
-		// Step 3: Fix unquoted property names (be more specific)
-		// Only fix property names that are not already quoted
-		content = content.replace(/([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '"$1":');
-		
-		// Step 4: Clean up any control characters
-		content = content.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');
-		
-		// Step 5: Ensure proper spacing
-		content = content.replace(/\s+/g, ' ');  // Normalize whitespace
-		
-		log(`Fixed content length: ${content.length}`);
-		log(`Fixed content preview: ${content.substring(0, 200)}...`);
-		
-		return content.trim();
-	}
-
-	private tryJsonFixApproach1(content: string): ProcessedFile | null {
-		// Approach 1: Remove comments and trailing commas
-		let fixed = content
-			.replace(/\/\/.*$/gm, '')  // Remove single line comments
-			.replace(/\/\*[\s\S]*?\*\//g, '')  // Remove multi-line comments
-			.replace(/,(\s*[}\]])/g, '$1');  // Remove trailing commas
-		
-		try {
-			const parsed = JSON.parse(fixed);
-			let formatted = JSON.stringify(parsed, null, 2);
-			if (!formatted.endsWith('\n')) formatted += '\n';
-			return { content: formatted, type: 'json', valid: true };
-		} catch {
-			return null;
-		}
-	}
-
-	private tryJsonFixApproach2(content: string): ProcessedFile | null {
-		// Approach 2: Try to fix common VS Code settings issues
-		let fixed = content
-			.replace(/\/\/.*$/gm, '')  // Remove comments
-			.replace(/,(\s*[}\]])/g, '$1')  // Remove trailing commas
-			.replace(/([a-zA-Z_$][a-zA-Z0-9_$]*)\s*:/g, '"$1":')  // Quote property names
-			.replace(/[\u0000-\u001F\u007F-\u009F]/g, '');  // Remove control chars
-		
-		try {
-			const parsed = JSON.parse(fixed);
-			let formatted = JSON.stringify(parsed, null, 2);
-			if (!formatted.endsWith('\n')) formatted += '\n';
-			return { content: formatted, type: 'json', valid: true };
-		} catch {
-			return null;
-		}
-	}
-
-	private tryJsonFixApproach3(content: string): ProcessedFile | null {
-		// Approach 3: Minimal fixes - just remove comments
-		let fixed = content
-			.replace(/\/\/.*$/gm, '')  // Remove single line comments
-			.replace(/\/\*[\s\S]*?\*\//g, '');  // Remove multi-line comments
-		
-		try {
-			const parsed = JSON.parse(fixed);
-			let formatted = JSON.stringify(parsed, null, 2);
-			if (!formatted.endsWith('\n')) formatted += '\n';
-			return { content: formatted, type: 'json', valid: true };
-		} catch {
-			return null;
-		}
-	}
-
-	private async processTextFile(filePath: string): Promise<ProcessedFile> {
+	private processTextFile(filePath: string): ProcessedFile {
 		const content = fs.readFileSync(filePath, 'utf8');
 		
 		if (!content || !content.trim()) {
@@ -277,7 +187,12 @@ export class FileProcessor {
 		return {
 			content: cleanedContent,
 			type: 'text',
-			valid: true
+			valid: true,
+			metadata: {
+				fileSize: cleanedContent.length,
+				mimeType: 'text/plain',
+				encoding: 'utf8'
+			}
 		};
 	}
 
@@ -294,5 +209,24 @@ export class FileProcessor {
 		}
 		
 		return gistFiles;
+	}
+
+	private cleanupTempDir(): void {
+		if (this.tempDir && fs.existsSync(this.tempDir)) {
+			try {
+				// Remove all files in temp directory
+				const files = fs.readdirSync(this.tempDir);
+				for (const file of files) {
+					const filePath = path.join(this.tempDir, file);
+					fs.unlinkSync(filePath);
+				}
+				// Remove temp directory
+				fs.rmdirSync(this.tempDir);
+				log(`Cleaned up temporary directory: ${this.tempDir}`);
+			} catch (error) {
+				log(`Error cleaning up temp directory: ${error}`);
+			}
+			this.tempDir = null;
+		}
 	}
 }

@@ -364,7 +364,7 @@ export function getDashboardHTML(savedPath: string, savedFiles: string[], savedC
 				
 				<div class="path-display">
 					<h3>Settings Directory</h3>
-					<div class="path-text">/home/diego/.config/Cursor/User</div>
+					<div class="path-text">${savedPath}</div>
 				</div>
 				
 				<div class="main-grid">
@@ -372,7 +372,11 @@ export function getDashboardHTML(savedPath: string, savedFiles: string[], savedC
 						<div class="panel">
 							<h3>
 								<span>📁 Files to Sync</span>
-								<button class="btn-secondary" onclick="saveSelections()">Save</button>
+								<div style="display: flex; gap: 8px;">
+									<button class="btn-small" onclick="selectAll()">All</button>
+									<button class="btn-small" onclick="clearAll()">Clear</button>
+									<button class="btn-small primary" onclick="saveSelections()">Save</button>
+								</div>
 							</h3>
 							<div class="file-grid scrollbar" id="fileList">
 								<div class="file-card" onclick="toggleSelection('settings.json')">
@@ -383,33 +387,21 @@ export function getDashboardHTML(savedPath: string, savedFiles: string[], savedC
 									<span class="file-icon">⌨️</span>
 									<p class="file-name">keybindings.json</p>
 								</div>
-								<div class="file-card" onclick="toggleSelection('extensions.json')">
-									<span class="file-icon">🔌</span>
-									<p class="file-name">extensions.json</p>
-								</div>
-								<div class="file-card" onclick="toggleSelection('launch.json')">
-									<span class="file-icon">🚀</span>
-									<p class="file-name">launch.json</p>
-								</div>
-								<div class="file-card" onclick="toggleSelection('tasks.json')">
-									<span class="file-icon">📋</span>
-									<p class="file-name">tasks.json</p>
-								</div>
 								<div class="file-card" onclick="toggleSelection('snippets')">
 									<span class="file-icon">✂️</span>
 									<p class="file-name">snippets</p>
 								</div>
-								<div class="file-card" onclick="toggleSelection('globalStorage')">
-									<span class="file-icon">💾</span>
-									<p class="file-name">globalStorage</p>
+								<div class="file-card" onclick="toggleSelection('extensions.json')">
+									<span class="file-icon">📦</span>
+									<p class="file-name">extensions.json</p>
 								</div>
-								<div class="file-card" onclick="toggleSelection('workspaceStorage')">
-									<span class="file-icon">🏢</span>
-									<p class="file-name">workspaceStorage</p>
+								<div class="file-card" onclick="toggleSelection('profiles')">
+									<span class="file-icon">👤</span>
+									<p class="file-name">profiles</p>
 								</div>
-								<div class="file-card" onclick="toggleSelection('images')">
-									<span class="file-icon">🖼️</span>
-									<p class="file-name">images</p>
+								<div class="file-card" onclick="toggleSelection('sync')">
+									<span class="file-icon">🔄</span>
+									<p class="file-name">sync</p>
 								</div>
 							</div>
 						</div>
@@ -426,8 +418,8 @@ export function getDashboardHTML(savedPath: string, savedFiles: string[], savedC
 							</div>
 							<div class="form-group">
 								<label for="githubToken">Personal Access Token</label>
-								<input type="password" class="form-input" id="githubToken" placeholder="ghp_..." value="${savedConfig.github?.personalAccessToken || ''}">
-								<div class="form-help">Create at: GitHub.com → Settings → Developer settings → Personal access tokens → Tokens (classic) with "gist" scope</div>
+								<input type="password" class="form-input" id="githubToken" placeholder="Enter your GitHub token" value="${savedConfig.github?.personalAccessToken || ''}">
+								<div class="form-help">Create at: GitHub Settings → Developer settings → Personal access tokens → Tokens (classic) with "gist" scope</div>
 							</div>
 							<div class="form-row">
 								<div class="form-group">
@@ -467,7 +459,7 @@ export function getDashboardHTML(savedPath: string, savedFiles: string[], savedC
 			<script>
 				const vscode = acquireVsCodeApi();
 				let selectedFiles = new Set(${JSON.stringify(savedFiles)});
-				let currentPath = '${savedPath}';
+				let currentPath = ${JSON.stringify(savedPath)};
 				
 				// Function to sync panel heights
 				function syncPanelHeights() {
@@ -607,10 +599,50 @@ export function getDashboardHTML(savedPath: string, savedFiles: string[], savedC
 						selectedFiles.add(fileName);
 						card.classList.add('selected');
 					}
+					
+					// Auto-save when selection changes
+					autoSaveSelections();
+				}
+				
+				function selectAll() {
+					const cards = document.querySelectorAll('.file-card');
+					cards.forEach(card => {
+						const fileName = card.querySelector('.file-name').textContent;
+						selectedFiles.add(fileName);
+						card.classList.add('selected');
+					});
+					autoSaveSelections();
+				}
+				
+				function clearAll() {
+					const cards = document.querySelectorAll('.file-card');
+					cards.forEach(card => {
+						card.classList.remove('selected');
+					});
+					selectedFiles.clear();
+					autoSaveSelections();
+				}
+				
+				function autoSaveSelections() {
+					// Update the configuration JSON with selected files
+					const configTextarea = document.getElementById('configEditor');
+					try {
+						const currentConfig = JSON.parse(configTextarea.value);
+						currentConfig.includedDirectories = Array.from(selectedFiles);
+						configTextarea.value = JSON.stringify(currentConfig, null, 2);
+						
+						// Save to extension
+						vscode.postMessage({
+							command: 'saveSelections',
+							files: Array.from(selectedFiles)
+						});
+					} catch (error) {
+						console.log('Error auto-saving selections:', error);
+					}
 				}
 				
 				function saveSelections() {
-					// Update the configuration JSON with selected files
+					// Manual save - same as auto-save but with user feedback
 					const configTextarea = document.getElementById('configEditor');
 					try {
 						const currentConfig = JSON.parse(configTextarea.value);
