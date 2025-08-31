@@ -1,0 +1,67 @@
+{
+  "name": "cursor-git-settings-sync",
+  "displayName": "Cursor Git Settings Sync",
+  "description": "A VS Code extension for syncing settings via Git",
+  "version": "0.0.1",
+  "publisher": "ddcsoftdev",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/diego/cursor-git-settings-sync.git"
+  },
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "cursor-git-settings-sync.showDashboard",
+        "title": "Show Settings Sync Dashboard"
+      },
+      {
+        "command": "cursor-git-settings-sync.pullConfig",
+        "title": "Pull Config"
+      },
+      {
+        "command": "cursor-git-settings-sync.pushConfig",
+        "title": "Push Config"
+      },
+      {
+        "command": "cursor-git-settings-sync.openSettings",
+        "title": "Open Cursor Settings"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "cursor-git-settings-sync.showDashboard",
+          "when": "true"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "npm:compile": "npm run compile",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "test": "node ./out/test/runTest.js"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.1",
+    "@types/node": "16.x",
+    "@types/vscode": "^1.74.0",
+    "@typescript-eslint/eslint-plugin": "^6.4.1",
+    "@typescript-eslint/parser": "^6.4.1",
+    "eslint": "^8.47.0",
+    "mocha": "^10.2.0",
+    "typescript": "^5.1.6",
+    "@vscode/test-electron": "^2.3.8"
+  }
+}
