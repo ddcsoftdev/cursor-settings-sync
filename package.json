@@ -1,18 +1,30 @@
 {
   "name": "cursor-git-settings-sync",
   "displayName": "Cursor Git Settings Sync",
-  "description": "A VS Code extension for syncing settings via Git",
-  "version": "0.0.1",
+  "description": "Sync your Cursor/VS Code settings across devices using GitHub Gists. Backup and restore settings.json, keybindings.json, extensions.json, snippets, profiles, and sync folders.",
+  "version": "1.0.0",
   "publisher": "ddcsoftdev",
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
-    "Other"
+    "Other",
+    "SCM Providers",
+    "Extension Packs"
+  ],
+  "keywords": [
+    "settings",
+    "sync",
+    "backup",
+    "github",
+    "gist",
+    "cursor",
+    "vscode",
+    "configuration"
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/diego/cursor-git-settings-sync.git"
+    "url": "https://github.com/ddcsoftdev/cursor-settings-sync.git"
   },
   "activationEvents": [],
   "main": "./out/extension.js",
