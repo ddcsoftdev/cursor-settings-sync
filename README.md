@@ -68,5 +68,3 @@ Sync your Cursor/VS Code settings across devices using GitHub Gists. This extens
 MIT License - see [LICENSE](LICENSE) file for details.
 
 ---
-
-**Made with ❤️ for the Cursor/VS Code community**
