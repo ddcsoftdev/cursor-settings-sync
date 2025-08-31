@@ -7,6 +7,7 @@ import { getDashboardHTML } from './ui';
 import { ConfigManager, setOutputChannel } from './configManager';
 import { setGitHubOutputChannel } from './github';
 import { setSyncOutputChannel } from './syncService';
+import { setFileProcessorOutputChannel } from './fileProcessor';
 
 // Create a dedicated output channel for logging
 const outputChannel = vscode.window.createOutputChannel('Cursor Git Settings Sync');
@@ -16,6 +17,7 @@ export function activate(context: vscode.ExtensionContext) {
 	setOutputChannel(outputChannel);
 	setGitHubOutputChannel(outputChannel);
 	setSyncOutputChannel(outputChannel);
+	setFileProcessorOutputChannel(outputChannel);
 	outputChannel.appendLine('Congratulations, your extension "cursor-git-settings-sync" is now active!');
 
 	// Register the dashboard command

@@ -3,6 +3,7 @@ import { ExtensionConfig, TimestampData } from './types';
 import { GitHubService } from './github';
 import { FileManager } from './fileManager';
 import { ConfigManager } from './configManager';
+import { FileProcessor } from './fileProcessor';
 
 // Get the output channel from the extension
 let outputChannel: vscode.OutputChannel | undefined;
@@ -22,6 +23,7 @@ export class SyncService {
 	private config: ExtensionConfig;
 	private githubService: GitHubService;
 	private fileManager: FileManager;
+	private fileProcessor: FileProcessor;
 	private configManager?: ConfigManager;
 
 	constructor(config: ExtensionConfig, configManager?: ConfigManager) {
@@ -31,6 +33,7 @@ export class SyncService {
 		log('SyncService constructor - About to create GitHubService with config token: ' + !!config.github?.personalAccessToken);
 		this.githubService = new GitHubService(config);
 		this.fileManager = new FileManager(config);
+		this.fileProcessor = new FileProcessor(config);
 		this.configManager = configManager;
 	}
 
@@ -54,22 +57,96 @@ export class SyncService {
 			
 			vscode.window.showInformationMessage(`Push Config: Creating GitHub Gist... (${files.join(', ')})`);
 			
-			// Read files
-			const settingsPath = this.config.settings.path || path;
-			const fileContents = await this.fileManager.readFiles(files, settingsPath);
+			// Process files using the new FileProcessor
+			let settingsPath = this.config.settings.path || path;
 			
-			// Create Gist
-			const result = await this.githubService.createGist(files, fileContents);
+			// Fix path issues
+			if (settingsPath.startsWith('home/') && !settingsPath.startsWith('/')) {
+				settingsPath = '/' + settingsPath;
+			}
+			if (settingsPath.startsWith('~')) {
+				settingsPath = settingsPath.replace('~', process.env.HOME || process.env.USERPROFILE || '');
+			}
 			
-			// Update config with new gist ID
-			this.config.github.gistId = result.id;
+			log('pushConfiguration - Processing files: ' + files.join(', '));
+			log('pushConfiguration - Settings path: ' + settingsPath);
+			
+			// Use FileProcessor to handle different file types properly
+			const processedFiles = await this.fileProcessor.processFiles(files, settingsPath);
+			const fileContents = this.fileProcessor.convertToGistFormat(processedFiles);
+			
+			log('pushConfiguration - Processed files: ' + Object.keys(fileContents).join(', '));
+			
+			// Check if we have an existing Gist ID
+			const existingGistId = this.config.github.gistId;
+			log('pushConfiguration - Existing Gist ID: ' + (existingGistId || 'none'));
+			let result;
+			
+			// First, try to find an existing Gist from this extension
+			let gistId = existingGistId;
+			if (!gistId) {
+				log('pushConfiguration - No stored Gist ID, searching for existing Gist...');
+				gistId = await this.githubService.findExistingGist();
+				if (gistId) {
+					log('pushConfiguration - Found existing Gist: ' + gistId);
+					// Update config with found Gist ID
+					this.config.github.gistId = gistId;
+				}
+			}
+			
+			if (gistId) {
+				log('pushConfiguration - Replacing existing Gist: ' + gistId);
+				try {
+					// Always use the replacement strategy: pull, delete, merge, push
+					log('pushConfiguration - Calling replaceGistWithMerge...');
+					await this.replaceGistWithMerge(files, path, context);
+					log('pushConfiguration - replaceGistWithMerge completed successfully');
+					return; // replaceGistWithMerge handles its own success message
+				} catch (error) {
+					log('pushConfiguration - Failed to replace Gist: ' + error);
+					
+					// Check if this is a 404 error (gist not found)
+					if (error instanceof Error && error.message.includes('no longer exists')) {
+						log('pushConfiguration - Gist no longer exists, creating new gist instead');
+						// Create new gist since the old one doesn't exist
+						result = await this.githubService.createGist(files, fileContents);
+						// Update config with new gist ID
+						this.config.github.gistId = result.id;
+						log('pushConfiguration - Created new Gist with ID: ' + result.id);
+						
+						// Clean up any old Gists after creating new one
+						await this.githubService.cleanupOldGists(result.id);
+					} else {
+						log('pushConfiguration - Creating new Gist instead');
+						// If replacement fails for other reasons, create a new one
+						result = await this.githubService.createGist(files, fileContents);
+						// Update config with new gist ID
+						this.config.github.gistId = result.id;
+						log('pushConfiguration - Created new Gist with ID: ' + result.id);
+						
+						// Clean up any old Gists after creating new one
+						await this.githubService.cleanupOldGists(result.id);
+					}
+				}
+			} else {
+				log('pushConfiguration - Creating new Gist (no existing ID found)');
+				// Create new Gist
+				result = await this.githubService.createGist(files, fileContents);
+				// Update config with new gist ID
+				this.config.github.gistId = result.id;
+				log('pushConfiguration - Created new Gist with ID: ' + result.id);
+				
+				// Clean up any old Gists after creating new one
+				await this.githubService.cleanupOldGists(result.id);
+			}
 			if (this.configManager) {
 				await this.configManager.saveConfig(this.config);
 			} else {
 				context.globalState.update('extensionConfig', this.config);
 			}
 			
-			vscode.window.showInformationMessage(`✅ Configuration pushed successfully to GitHub Gist! ID: ${result.id}`);
+			const action = existingGistId ? 'updated' : 'created';
+			vscode.window.showInformationMessage(`✅ Configuration ${action} successfully in GitHub Gist! ID: ${result.id}`);
 		} catch (error) {
 			vscode.window.showErrorMessage(`❌ Failed to push configuration: ${error}`);
 		}
@@ -114,34 +191,204 @@ export class SyncService {
 					throw new Error('Gist does not belong to this extension');
 				}
 				
-				progress.report({ increment: 60 });
+				progress.report({ increment: 20 });
 				
-				// Update included directories from timestamp
-				if (timestampData.includedDirectories) {
-					this.config.includedDirectories = timestampData.includedDirectories;
+				// Extract file contents from gist
+				const fileContents: { [key: string]: string } = {};
+				for (const file of files) {
+					const gistFile = result.files[file];
+					if (gistFile) {
+						fileContents[file] = gistFile.content;
+					}
+				}
+				
+				progress.report({ increment: 20 });
+				
+				// Write files to local system
+				await this.fileManager.writeFiles(files, path, fileContents);
+				
+				progress.report({ increment: 20 });
+			});
+			
+			vscode.window.showInformationMessage(`✅ Configuration pulled successfully from GitHub Gist!`);
+		} catch (error) {
+			vscode.window.showErrorMessage(`❌ Failed to pull configuration: ${error}`);
+		}
+	}
+
+	async replaceGistWithMerge(files: string[], path: string, context: vscode.ExtensionContext): Promise<void> {
+		log('replaceGistWithMerge - Starting replacement strategy');
+		try {
+			if (!path) {
+				vscode.window.showErrorMessage('Please enter a settings path first');
+				return;
+			}
+
+			// Check authentication first
+			if (!this.config.github.personalAccessToken || !this.config.github.personalAccessToken.trim()) {
+				vscode.window.showErrorMessage('No GitHub authentication token found. Please enter your Personal Access Token in the GitHub Authentication form above.');
+				return;
+			}
+
+			const gistId = this.config.github.gistId;
+			if (!gistId) {
+				vscode.window.showErrorMessage('No Gist ID found. Please push your configuration first.');
+				return;
+			}
+
+			log(`replaceGistWithMerge - Using gist ID: ${gistId}`);
+
+			vscode.window.showInformationMessage(`Replace Gist: Pulling, merging, and pushing... (${files.join(', ')})`);
+			
+			await vscode.window.withProgress({
+				location: vscode.ProgressLocation.Notification,
+				title: "Replacing Gist with merge...",
+				cancellable: false
+			}, async (progress) => {
+				progress.report({ increment: 10, message: "Pulling existing Gist..." });
+				
+				// Step 1: Pull existing gist
+				log('replaceGistWithMerge - Step 1: Pulling existing gist');
+				let existingGist;
+				try {
+					existingGist = await this.githubService.getGist(gistId);
+					log(`replaceGistWithMerge - Successfully pulled gist with ${Object.keys(existingGist.files).length} files`);
+				} catch (error) {
+					if (error instanceof Error && error.message.includes('404')) {
+						log(`replaceGistWithMerge - Gist ${gistId} not found (404), clearing stored gist ID`);
+						// Clear the stored gist ID since it no longer exists
+						this.config.github.gistId = null;
+						if (this.configManager) {
+							await this.configManager.saveConfig(this.config);
+						} else {
+							context.globalState.update('extensionConfig', this.config);
+						}
+						// Throw the error to be caught by the calling function
+						throw new Error(`Stored gist ID ${gistId} no longer exists. Please try pushing again to create a new gist.`);
+					}
+					throw error;
+				}
+				
+				// Verify this is the right gist
+				const timestampFile = existingGist.files['timestamp.json'];
+				if (!timestampFile) {
+					throw new Error('No timestamp.json found in Gist');
+				}
+				
+				const timestampData: TimestampData = JSON.parse(timestampFile.content);
+				if (timestampData.extensionName !== this.config.extensionName) {
+					throw new Error('Gist does not belong to this extension');
+				}
+				
+				progress.report({ increment: 20, message: "Deleting existing Gist..." });
+				
+				// Step 2: Delete the existing gist
+				log('replaceGistWithMerge - Step 2: Deleting existing gist');
+				await this.githubService.deleteGist(gistId);
+				log(`replaceGistWithMerge - Successfully deleted gist: ${gistId}`);
+				
+				progress.report({ increment: 20, message: "Merging files locally..." });
+				
+				// Step 3: Merge files locally in temp directory
+				const fs = require('fs');
+				const path = require('path');
+				const os = require('os');
+				
+				// Create temporary directory for merging
+				const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-sync-merge-'));
+				log(`replaceGistWithMerge - Created merge temp directory: ${tempDir}`);
+				
+				try {
+					// Extract existing files from gist to temp directory
+					const existingFiles: { [key: string]: string } = {};
+					for (const [fileName, fileData] of Object.entries(existingGist.files)) {
+						// Skip our special files
+						if (fileName !== 'cursor-git-sync-storage.json' && fileName !== 'timestamp.json') {
+							existingFiles[fileName] = fileData.content;
+							const tempFilePath = path.join(tempDir, fileName);
+							fs.writeFileSync(tempFilePath, fileData.content, 'utf8');
+							log(`replaceGistWithMerge - Extracted to temp: ${fileName}`);
+						}
+					}
+					
+					log(`replaceGistWithMerge - Found ${Object.keys(existingFiles).length} existing files: ${Object.keys(existingFiles).join(', ')}`);
+					
+					// Process current local files
+					let settingsPath = this.config.settings.path || path;
+					
+					// Fix path issues
+					if (settingsPath.startsWith('home/') && !settingsPath.startsWith('/')) {
+						settingsPath = '/' + settingsPath;
+					}
+					if (settingsPath.startsWith('~')) {
+						settingsPath = settingsPath.replace('~', process.env.HOME || process.env.USERPROFILE || '');
+					}
+					
+					// Use FileProcessor to handle different file types properly
+					const processedFiles = await this.fileProcessor.processFiles(files, settingsPath);
+					const newFileContents = this.fileProcessor.convertToGistFormat(processedFiles);
+					
+					log(`replaceGistWithMerge - Processed ${Object.keys(newFileContents).length} new files: ${Object.keys(newFileContents).join(', ')}`);
+					
+					// Merge: new files take precedence over existing ones
+					const mergedFiles: { [key: string]: { content: string } } = {};
+					
+					// Start with existing files
+					for (const [fileName, content] of Object.entries(existingFiles)) {
+						mergedFiles[fileName] = { content };
+					}
+					
+					// Add/override with new files
+					for (const [fileName, fileData] of Object.entries(newFileContents)) {
+						mergedFiles[fileName] = fileData;
+					}
+					
+					log(`replaceGistWithMerge - Merged ${Object.keys(mergedFiles).length} total files: ${Object.keys(mergedFiles).join(', ')}`);
+					
+					progress.report({ increment: 20, message: "Creating new Gist..." });
+					
+					// Step 4: Create new gist with merged content
+					log('replaceGistWithMerge - Step 4: Creating new gist with merged content');
+					const result = await this.githubService.createGist(files, mergedFiles);
+					
+					// Update config with new gist ID
+					this.config.github.gistId = result.id;
+					log(`replaceGistWithMerge - Successfully created new gist: ${result.id}`);
+					
+					// Save updated config
 					if (this.configManager) {
 						await this.configManager.saveConfig(this.config);
 					} else {
 						context.globalState.update('extensionConfig', this.config);
 					}
+					
+					progress.report({ increment: 10, message: "Cleanup..." });
+					
+					// Clean up any other old gists
+					await this.githubService.cleanupOldGists(result.id);
+					
+				} finally {
+					// Clean up temp directory
+					if (fs.existsSync(tempDir)) {
+						try {
+							const files = fs.readdirSync(tempDir);
+							for (const file of files) {
+								const filePath = path.join(tempDir, file);
+								fs.unlinkSync(filePath);
+							}
+							fs.rmdirSync(tempDir);
+							log(`replaceGistWithMerge - Cleaned up merge temp directory: ${tempDir}`);
+						} catch (error) {
+							log(`replaceGistWithMerge - Error cleaning up merge temp directory: ${error}`);
+						}
+					}
 				}
-				
-				progress.report({ increment: 80 });
-				
-				// Write files to local system
-				const settingsPath = this.config.settings.path || path;
-				const fileContents: { [key: string]: string } = {};
-				for (const [fileName, fileData] of Object.entries(result.files)) {
-					fileContents[fileName] = fileData.content;
-				}
-				await this.fileManager.writeFiles(files, settingsPath, fileContents);
-				
-				progress.report({ increment: 100 });
 			});
 			
-			vscode.window.showInformationMessage(`Configuration pulled successfully from GitHub Gist for: ${files.join(', ')}`);
+			vscode.window.showInformationMessage(`✅ Gist replaced successfully with merged content! New ID: ${this.config.github.gistId}`);
 		} catch (error) {
-			vscode.window.showErrorMessage(`Failed to pull configuration: ${error}`);
+			log(`replaceGistWithMerge - Error: ${error}`);
+			vscode.window.showErrorMessage(`❌ Failed to replace Gist: ${error}`);
 		}
 	}
 

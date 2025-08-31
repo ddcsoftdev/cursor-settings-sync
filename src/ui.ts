@@ -358,8 +358,8 @@ export function getDashboardHTML(savedPath: string, savedFiles: string[], savedC
 				</div>
 				
 				<div class="action-buttons">
-					<button class="btn-primary" onclick="pullConfig()">📥 Pull Settings</button>
-					<button class="btn-primary" onclick="pushConfig()">📤 Push Settings</button>
+									<button class="btn-primary" onclick="pullConfig()">📥 Pull Settings</button>
+				<button class="btn-primary" onclick="pushConfig()">📤 Push Settings</button>
 				</div>
 				
 				<div class="path-display">

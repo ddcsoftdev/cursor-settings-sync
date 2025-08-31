@@ -139,7 +139,7 @@ export class GitHubService {
 		}
 	}
 
-	async createGist(files: string[], fileContents: { [key: string]: string }): Promise<GitHubApiResponse> {
+	async createGist(files: string[], fileContents: { [key: string]: { content: string } }): Promise<GitHubApiResponse> {
 		// Debug: Log token info (without showing the actual token)
 		log('createGist - Token length: ' + this.config.github.personalAccessToken.length);
 		log('createGist - Token starts with: ' + this.config.github.personalAccessToken.substring(0, 4));
@@ -148,12 +148,14 @@ export class GitHubService {
 		// Prepare gist data - Create deep copy to avoid modifying original config
 		const gistConfig = JSON.parse(JSON.stringify(this.config));
 		gistConfig.github.personalAccessToken = undefined;
+		// Remove includedDirectories to keep it local only
+		delete gistConfig.includedDirectories;
 		
 		const gistData: GistData = {
 			description: `Cursor Settings Sync - ${new Date().toISOString()}`,
 			public: this.config.github.gistPublic,
 			files: {
-				'config.json': {
+				'cursor-git-sync-storage.json': {
 					content: JSON.stringify(gistConfig, null, 2)
 				},
 				'timestamp.json': {
@@ -172,6 +174,143 @@ export class GitHubService {
 
 	async getGist(gistId: string): Promise<GitHubApiResponse> {
 		return this.makeGitHubRequest(`/gists/${gistId}`);
+	}
+
+	async findExistingGist(): Promise<string | null> {
+		log('Searching for existing Gists from this extension...');
+		
+		try {
+			// Get all Gists for the authenticated user
+			const gists = await this.makeGitHubRequest('/gists');
+			
+			for (const gist of gists) {
+				// Check if this Gist belongs to our extension
+				if (gist.files['cursor-git-sync-storage.json']) {
+					try {
+						const configContent = gist.files['cursor-git-sync-storage.json'].content;
+						const config = JSON.parse(configContent);
+						
+						if (config.extensionName === this.config.extensionName) {
+							log(`Found existing Gist: ${gist.id}`);
+							return gist.id;
+						}
+					} catch (error) {
+						log(`Error parsing Gist config: ${error}`);
+					}
+				}
+			}
+			
+			log('No existing Gist found for this extension');
+			return null;
+		} catch (error) {
+			log(`Error searching for existing Gists: ${error}`);
+			return null;
+		}
+	}
+
+	async cleanupOldGists(excludeGistId: string): Promise<void> {
+		log('Cleaning up old Gists...');
+		
+		try {
+			// Get all Gists for the authenticated user
+			const gists = await this.makeGitHubRequest('/gists');
+			
+			for (const gist of gists) {
+				// Skip the current Gist
+				if (gist.id === excludeGistId) {
+					continue;
+				}
+				
+				// Check if this Gist belongs to our extension
+				if (gist.files['cursor-git-sync-storage.json']) {
+					try {
+						const configContent = gist.files['cursor-git-sync-storage.json'].content;
+						const config = JSON.parse(configContent);
+						
+						if (config.extensionName === this.config.extensionName) {
+							log(`Deleting old Gist: ${gist.id}`);
+							await this.deleteGist(gist.id);
+						}
+					} catch (error) {
+						log(`Error parsing Gist config for cleanup: ${error}`);
+					}
+				}
+			}
+			
+			log('Cleanup completed');
+		} catch (error) {
+			log(`Error during cleanup: ${error}`);
+		}
+	}
+
+	async updateGist(gistId: string, files: string[], fileContents: { [key: string]: { content: string } }): Promise<GitHubApiResponse> {
+		// Debug: Log token info (without showing the actual token)
+		log('updateGist - Token length: ' + this.config.github.personalAccessToken.length);
+		log('updateGist - Token starts with: ' + this.config.github.personalAccessToken.substring(0, 4));
+		log('updateGist - Token ends with: ' + this.config.github.personalAccessToken.substring(this.config.github.personalAccessToken.length - 4));
+
+		// First, get the existing Gist to merge with
+		log('updateGist - Fetching existing Gist for merge');
+		const existingGist = await this.getGist(gistId);
+		
+		// Prepare gist data - Create deep copy to avoid modifying original config
+		const gistConfig = JSON.parse(JSON.stringify(this.config));
+		gistConfig.github.personalAccessToken = undefined;
+		// Remove includedDirectories to keep it local only
+		delete gistConfig.includedDirectories;
+		
+		// Merge existing files with new files
+		const mergedFiles: { [key: string]: { content: string } } = {};
+		
+		// Start with existing files (excluding our special files)
+		for (const [fileName, fileData] of Object.entries(existingGist.files)) {
+			if (fileName !== 'cursor-git-sync-storage.json' && fileName !== 'timestamp.json') {
+				// Ensure correct structure: { content: string }
+				mergedFiles[fileName] = {
+					content: fileData.content
+				};
+			}
+		}
+		
+		// Add/update new files
+		for (const [fileName, fileData] of Object.entries(fileContents)) {
+			// Ensure correct structure: { content: string }
+			mergedFiles[fileName] = {
+				content: fileData.content
+			};
+		}
+		
+		// Get all unique files for timestamp
+		const allFiles = [...new Set([...Object.keys(existingGist.files), ...files])].filter(
+			file => file !== 'cursor-git-sync-storage.json' && file !== 'timestamp.json'
+		);
+		
+		const gistData: GistData = {
+			description: `Cursor Settings Sync - ${new Date().toISOString()}`,
+			public: this.config.github.gistPublic,
+			files: {
+				'cursor-git-sync-storage.json': {
+					content: JSON.stringify(gistConfig, null, 2)
+				},
+				'timestamp.json': {
+					content: JSON.stringify({
+						timestamp: new Date().toISOString(),
+						extensionName: this.config.extensionName,
+						files: allFiles
+					} as TimestampData, null, 2)
+				},
+				...mergedFiles
+			}
+		};
+
+		log('updateGist - Merged files: ' + Object.keys(mergedFiles).join(', '));
+		
+		// Debug: Log the structure being sent
+		for (const [fileName, fileData] of Object.entries(mergedFiles)) {
+			log(`updateGist - File ${fileName} structure: ${typeof fileData.content} - ${fileData.content.substring(0, 50)}...`);
+		}
+		
+		return this.makeGitHubRequest(`/gists/${gistId}`, 'PATCH', gistData);
 	}
 
 	async deleteGist(gistId: string): Promise<void> {

@@ -12,17 +12,30 @@ export class FileManager {
 		const fileContents: { [key: string]: string } = {};
 		const fs = require('fs');
 		
-		// Read only JSON files for now
+		// Read all selected files
 		for (const file of files) {
-			if (file.endsWith('.json')) {
-				const filePath = `${settingsPath}/${file}`;
-				if (fs.existsSync(filePath)) {
-					try {
-						fileContents[file] = fs.readFileSync(filePath, 'utf8');
-					} catch (error) {
-						console.log(`Failed to read file: ${filePath}`, error);
+			const filePath = `${settingsPath}/${file}`;
+			if (fs.existsSync(filePath)) {
+				try {
+					// Check if it's a directory
+					const stats = fs.statSync(filePath);
+					if (stats.isDirectory()) {
+						// Skip directories for now - they cause GitHub API issues
+						console.log(`Skipping directory: ${filePath}`);
+						continue;
+					} else {
+						// For files, read the content
+						const content = fs.readFileSync(filePath, 'utf8');
+						// Only include files with actual content
+						if (content && content.trim()) {
+							fileContents[file] = content;
+						}
 					}
+				} catch (error) {
+					console.log(`Failed to read file: ${filePath}`, error);
 				}
+			} else {
+				console.log(`File not found: ${filePath}`);
 			}
 		}
 		
