@@ -2,13 +2,13 @@
   "name": "cursor-git-settings-sync",
   "displayName": "Cursor Git Settings Sync",
   "description": "Sync your Cursor/VS Code settings across devices using GitHub Gists. Backup and restore settings.json, keybindings.json, extensions.json, snippets, profiles, and sync folders.",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "publisher": "ddcsoftdev",
   "engines": {
     "vscode": "^1.74.0"
   },
   "categories": [
-    "Other",
+  "Other",
     "SCM Providers",
     "Extension Packs"
   ],
