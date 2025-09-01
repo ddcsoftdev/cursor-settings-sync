@@ -169,7 +169,7 @@ export class GitHubService {
 		
 		// Create single gist
 		const gistData: GistData = {
-			description: `Cursor Settings Sync - ${new Date().toISOString()}`,
+			description: `ddcsoftdev - Cursor Git Settings Sync - ${this.config.extensionName}`,
 			public: this.config.github.gistPublic,
 			files: {
 				'cursor-git-sync-storage.json': {
@@ -193,6 +193,37 @@ export class GitHubService {
 		return this.makeGitHubRequest(`/gists/${gistId}`);
 	}
 
+	async listAllGists(): Promise<void> {
+		log('Listing all available Gists for debugging...');
+		
+		try {
+			const gists = await this.makeGitHubRequest('/gists');
+			
+			log(`Found ${gists.length} total gists:`);
+			for (const gist of gists) {
+				const hasStorageFile = gist.files['cursor-git-sync-storage.json'] ? '✅' : '❌';
+				const hasTimestampFile = gist.files['timestamp.json'] ? '✅' : '❌';
+				
+				log(`  Gist ${gist.id}: ${gist.description}`);
+				log(`    - Storage file: ${hasStorageFile}`);
+				log(`    - Timestamp file: ${hasTimestampFile}`);
+				log(`    - Files: ${Object.keys(gist.files).join(', ')}`);
+				
+				if (gist.files['cursor-git-sync-storage.json']) {
+					try {
+						const configContent = gist.files['cursor-git-sync-storage.json'].content;
+						const config = JSON.parse(configContent);
+						log(`    - Extension name: ${config.extensionName || 'undefined'}`);
+					} catch (error) {
+						log(`    - Config parse error: ${error}`);
+					}
+				}
+			}
+		} catch (error) {
+			log(`Error listing gists: ${error}`);
+		}
+	}
+
 	async findExistingGist(): Promise<string | null> {
 		log('Searching for existing Gists from this extension...');
 		
@@ -200,20 +231,51 @@ export class GitHubService {
 			// Get all Gists for the authenticated user
 			const gists = await this.makeGitHubRequest('/gists');
 			
+			// Priority 1: Look for gists with exact extension name match
 			for (const gist of gists) {
-				// Check if this Gist belongs to our extension
 				if (gist.files['cursor-git-sync-storage.json']) {
 					try {
 						const configContent = gist.files['cursor-git-sync-storage.json'].content;
 						const config = JSON.parse(configContent);
 						
 						if (config.extensionName === this.config.extensionName) {
-							log(`Found existing Gist: ${gist.id}`);
+							log(`Found existing Gist by extension name: ${gist.id}`);
 							return gist.id;
 						}
 					} catch (error) {
 						log(`Error parsing Gist config: ${error}`);
 					}
+				}
+			}
+			
+			// Priority 2: Look for gists by username (ddcsoftdev) and storage file
+			if (this.config.github.username && this.config.github.username.toLowerCase() === 'ddcsoftdev') {
+				for (const gist of gists) {
+					if (gist.files['cursor-git-sync-storage.json']) {
+						try {
+							const configContent = gist.files['cursor-git-sync-storage.json'].content;
+							const config = JSON.parse(configContent);
+							
+							// Check if this gist belongs to ddcsoftdev and has cursor-related extension name
+							if (config.extensionName && 
+								(config.extensionName.includes('cursor') || 
+								 config.extensionName.includes('git') || 
+								 config.extensionName.includes('sync'))) {
+								log(`Found existing Gist by username and cursor-related extension: ${gist.id} (${config.extensionName})`);
+								return gist.id;
+							}
+						} catch (error) {
+							log(`Error parsing Gist config: ${error}`);
+						}
+					}
+				}
+			}
+			
+			// Priority 3: Look for any gist with cursor-git-sync-storage.json (fallback)
+			for (const gist of gists) {
+				if (gist.files['cursor-git-sync-storage.json']) {
+					log(`Found Gist with storage file (fallback): ${gist.id}`);
+					return gist.id;
 				}
 			}
 			

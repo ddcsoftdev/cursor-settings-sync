@@ -2,7 +2,7 @@
   "name": "cursor-git-settings-sync",
   "displayName": "Cursor Git Settings Sync",
   "description": "Sync your Cursor/VS Code settings across devices using GitHub Gists. Backup and restore settings.json, keybindings.json, extensions.json, snippets, profiles, and sync folders.",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "publisher": "ddcsoftdev",
   "engines": {
     "vscode": "^1.74.0"
@@ -26,6 +26,11 @@
     "type": "git",
     "url": "https://github.com/ddcsoftdev/cursor-settings-sync.git"
   },
+  "bugs": {
+    "url": "https://github.com/ddcsoftdev/cursor-settings-sync/issues"
+  },
+  "homepage": "https://github.com/ddcsoftdev/cursor-settings-sync#readme",
+  "license": "MIT",
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
@@ -63,7 +68,9 @@
     "watch": "tsc -watch -p ./",
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src --ext ts",
-    "test": "node ./out/test/runTest.js"
+    "test": "node ./out/test/runTest.js",
+    "package": "npx @vscode/vsce package",
+    "publish": "npx ovsx publish"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.1",
@@ -71,10 +78,12 @@
     "@types/vscode": "^1.74.0",
     "@typescript-eslint/eslint-plugin": "^6.4.1",
     "@typescript-eslint/parser": "^6.4.1",
+    "@vscode/test-electron": "^2.3.8",
+    "@vscode/vsce": "^2.32.0",
     "eslint": "^8.47.0",
     "mocha": "^10.2.0",
-    "typescript": "^5.1.6",
-    "@vscode/test-electron": "^2.3.8"
+    "ovsx": "^0.8.4",
+    "typescript": "^5.1.6"
   },
   "dependencies": {
     "sharp": "^0.32.6"
