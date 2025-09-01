@@ -9,6 +9,7 @@ import { setGitHubOutputChannel } from './github';
 import { setSyncOutputChannel } from './syncService';
 import { setFileProcessorOutputChannel } from './fileProcessor';
 import { setPullOutputChannel } from './pullManager';
+import { GitHubService } from './github';
 
 function getDefaultSettingsPath(): string {
 	const homeDir = require('os').homedir();
@@ -189,6 +190,143 @@ async function openConfigFile(context: vscode.ExtensionContext) {
 		}
 	} catch (error) {
 		vscode.window.showErrorMessage(`Failed to open config file: ${error}`);
+	}
+}
+
+async function listAllGists(context: vscode.ExtensionContext) {
+	outputChannel.appendLine('🔍 Starting local gist analysis...');
+	
+	try {
+		// Initialize config manager and GitHub service
+		const configManager = new ConfigManager(context);
+		const config = await configManager.loadConfig();
+		const githubService = new GitHubService(config);
+		
+		// Create temp directory for local analysis
+		const fs = require('fs');
+		const path = require('path');
+		const os = require('os');
+		
+		const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cursor-gist-analysis-'));
+		outputChannel.appendLine(`📁 Created temp directory: ${tempDir}`);
+		
+		try {
+			// Download all gists to temp directory
+			outputChannel.appendLine('📥 Downloading all gists for local analysis...');
+			const gists = await githubService.listAllGists();
+			
+			outputChannel.appendLine(`📊 Found ${gists.length} total gists`);
+			
+			// Analyze each gist locally
+			for (const gist of gists) {
+				const gistDir = path.join(tempDir, gist.id);
+				fs.mkdirSync(gistDir, { recursive: true });
+				
+				outputChannel.appendLine(`\n🔍 Analyzing Gist: ${gist.id}`);
+				outputChannel.appendLine(`   Description: ${gist.description}`);
+				outputChannel.appendLine(`   Created: ${gist.created_at}`);
+				outputChannel.appendLine(`   Updated: ${gist.updated_at}`);
+				outputChannel.appendLine(`   Files: ${Object.keys(gist.files).join(', ')}`);
+				
+				// Check for identification files
+				const hasStorageFile = gist.files['cursor-git-sync-storage.json'];
+				const hasTimestampFile = gist.files['timestamp.json'];
+				
+				outputChannel.appendLine(`   Storage file: ${hasStorageFile ? '✅' : '❌'}`);
+				outputChannel.appendLine(`   Timestamp file: ${hasTimestampFile ? '✅' : '❌'}`);
+				
+				// Download and analyze storage file if it exists
+				if (hasStorageFile && hasStorageFile.content) {
+					try {
+						const storageFilePath = path.join(gistDir, 'cursor-git-sync-storage.json');
+						fs.writeFileSync(storageFilePath, hasStorageFile.content, 'utf8');
+						
+						const config = JSON.parse(hasStorageFile.content);
+						outputChannel.appendLine(`   Extension name: ${config.extensionName || 'undefined'}`);
+						outputChannel.appendLine(`   Username: ${config.github?.username || 'undefined'}`);
+						outputChannel.appendLine(`   Gist ID in config: ${config.github?.gistId || 'undefined'}`);
+						
+						// Check if this matches our current extension
+						const isMatch = config.extensionName === 'cursor-settings-sync';
+						outputChannel.appendLine(`   Extension match: ${isMatch ? '✅' : '❌'}`);
+						
+						if (isMatch) {
+							outputChannel.appendLine(`   🎯 POTENTIAL MATCH FOUND!`);
+						}
+						
+					} catch (error) {
+						outputChannel.appendLine(`   ❌ Error parsing storage file: ${error}`);
+					}
+				}
+				
+				// Download and analyze timestamp file if it exists
+				if (hasTimestampFile && hasTimestampFile.content) {
+					try {
+						const timestampFilePath = path.join(gistDir, 'timestamp.json');
+						fs.writeFileSync(timestampFilePath, hasTimestampFile.content, 'utf8');
+						
+						const timestamp = JSON.parse(hasTimestampFile.content);
+						outputChannel.appendLine(`   Timestamp: ${timestamp.timestamp || 'undefined'}`);
+						outputChannel.appendLine(`   Files in timestamp: ${timestamp.files?.join(', ') || 'none'}`);
+						
+					} catch (error) {
+						outputChannel.appendLine(`   ❌ Error parsing timestamp file: ${error}`);
+					}
+				}
+				
+				// Download all files for inspection
+				for (const [fileName, fileData] of Object.entries(gist.files)) {
+					if ((fileData as any).content) {
+						const filePath = path.join(gistDir, fileName);
+						fs.writeFileSync(filePath, (fileData as any).content, 'utf8');
+					}
+				}
+			}
+			
+			// Run the findExistingGist logic locally
+			outputChannel.appendLine('\n🔍 Running findExistingGist logic locally...');
+			const foundGistId = await githubService.findExistingGist();
+			
+			if (foundGistId) {
+				outputChannel.appendLine(`✅ findExistingGist found: ${foundGistId}`);
+			} else {
+				outputChannel.appendLine(`❌ findExistingGist found nothing`);
+			}
+			
+			outputChannel.appendLine('\n📁 All gist files downloaded to temp directory for inspection');
+			outputChannel.appendLine(`   Temp directory: ${tempDir}`);
+			outputChannel.appendLine('   You can manually inspect the files there');
+			
+		} finally {
+			// Clean up temp directory after 30 seconds (give user time to inspect)
+			setTimeout(() => {
+				try {
+					if (fs.existsSync(tempDir)) {
+						const files = fs.readdirSync(tempDir);
+						for (const file of files) {
+							const filePath = path.join(tempDir, file);
+							if (fs.statSync(filePath).isDirectory()) {
+								const subFiles = fs.readdirSync(filePath);
+								for (const subFile of subFiles) {
+									fs.unlinkSync(path.join(filePath, subFile));
+								}
+								fs.rmdirSync(filePath);
+							} else {
+								fs.unlinkSync(filePath);
+							}
+						}
+						fs.rmdirSync(tempDir);
+						outputChannel.appendLine(`🧹 Cleaned up temp directory: ${tempDir}`);
+					}
+				} catch (error) {
+					outputChannel.appendLine(`❌ Error cleaning up temp directory: ${error}`);
+				}
+			}, 30000); // 30 seconds
+		}
+		
+	} catch (error) {
+		outputChannel.appendLine(`❌ Error in listAllGists: ${error}`);
+		vscode.window.showErrorMessage(`Error listing gists: ${error}`);
 	}
 }
 

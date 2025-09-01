@@ -85,16 +85,19 @@ export class SyncService {
 			log('pushConfiguration - Existing Gist ID: ' + (existingGistId || 'none'));
 			let result;
 			
-			// First, try to find an existing Gist from this extension
-			let gistId = existingGistId;
-			if (!gistId) {
-				log('pushConfiguration - No stored Gist ID, searching for existing Gist...');
-				gistId = await this.githubService.findExistingGist();
-				if (gistId) {
-					log('pushConfiguration - Found existing Gist: ' + gistId);
-					// Update config with found Gist ID
-					this.config.github.gistId = gistId;
-				}
+			// ALWAYS try to find an existing Gist from this extension first
+			// This ensures cross-computer compatibility by finding the correct gist
+			log('pushConfiguration - Searching for existing Gist...');
+			let gistId = await this.githubService.findExistingGist();
+			
+			if (gistId) {
+				log('pushConfiguration - Found existing Gist: ' + gistId);
+				// Update config with found Gist ID
+				this.config.github.gistId = gistId;
+			} else {
+				log('pushConfiguration - No existing Gist found, will create new one');
+				// If no gist found, use the stored ID as fallback (but it might be invalid)
+				gistId = existingGistId;
 			}
 			
 			if (gistId) {
